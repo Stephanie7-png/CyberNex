@@ -1,96 +1,185 @@
-# Sentinel-X — API, Dashboard & Panneau de contrôle
+# Sentinel-X - Backend, API & Dashboard
 
-Partie « backend + supervision » du prototype SENTINEL-X (workshop EPSI Bac+4).
-Elle tourne sur le **PC Serveur Local** (Raspberry Pi 5 ou laptop) via Docker-Compose.
+Partie backend + supervision du prototype SENTINEL-X réalisé dans le cadre du workshop EPSI Bac+4.
+
+Cette partie regroupe une API FastAPI, un dashboard web, un broker MQTT Mosquitto et un simulateur permettant de tester le système sans matériel physique.
+
+## Fonctionnalités réalisées
+
+- API REST avec FastAPI
+- Dashboard web de supervision
+- Communication MQTT avec Mosquitto
+- Stockage des données dans SQLite
+- Affichage des mesures en temps réel
+- WebSocket pour les mises à jour du dashboard
+- Gestion et affichage des alertes
+- Envoi de commandes depuis le dashboard
+- Test de commande du buzzer
+- Simulateur Python de données capteurs
+- Documentation API avec Swagger
+- Protection des écritures par clé API
 
 ## Architecture
 
-```
-ESP8266 --MQTT(S)--> Mosquitto --> API FastAPI --> SQLite
-                                      |  \--WebSocket--> Dashboard (navigateur)
-Script IA --HTTP POST /api/v1/alerts, /api/v1/frame--> API
-Dashboard --POST /api/v1/commands--> API --MQTT sentinel/cmd--> ESP8266 (buzzer, LEDs)
-```
+    Simulateur / ESP8266
+            |
+            | MQTT
+            v
+        Mosquitto
+            |
+            v
+        API FastAPI
+          /    \
+         /      \
+      SQLite   WebSocket
+                  |
+                  v
+              Dashboard
+
+Le simulateur permet de reproduire les données d'un ESP8266 afin de tester le backend sans matériel physique.
 
 ## Prérequis
 
-- Docker + Docker Compose
-- (optionnel, pour tester) Python 3 + `pip install paho-mqtt`
+- Docker
+- Docker Compose
+- Python 3
+- paho-mqtt pour le simulateur
+
+Installation du module Python :
+
+    pip install paho-mqtt
+
+## Configuration
+
+Créer le fichier .env à partir de .env.example et définir une clé API personnelle.
+
+    cp .env.example .env
+
+Le fichier .env contient des informations sensibles et est exclu du dépôt Git.
 
 ## Démarrage
 
-```bash
-cp .env.example .env        # puis modifier API_KEY (valeur longue et aléatoire)
-docker compose up -d --build
-```
+Depuis le dossier backend :
 
-- Dashboard : http://IP_SERVEUR:8000
-- Documentation interactive de l'API : http://IP_SERVEUR:8000/docs
-- Santé : `curl http://IP_SERVEUR:8000/api/v1/health`
+    docker compose up -d --build
 
-## Tester sans matériel
+Vérifier les conteneurs :
 
-```bash
-python tools/simulate.py <API_KEY>
-```
-Le script simule l'ESP8266 : les courbes bougent et des alertes « gaz » apparaissent.
+    docker compose ps
 
-## Contrat d'interface (à partager avec les autres membres)
+## Accès
 
-### Télémétrie (ESP8266 → MQTT, topic `sentinel/telemetry`)
-```json
-{"device":"esp-01","temp":22.5,"hum":45.0,"gas":210,"pir":0}
-```
+Dashboard :
 
-### Commandes (API → ESP8266, topic `sentinel/cmd`)
-```json
-{"target":"buzzer","state":true}
-```
-`target` ∈ `buzzer`, `led_green`, `led_red`.
+    http://localhost:8000
 
-### Endpoints REST
+Documentation Swagger :
 
-| Méthode | Route | Auth | Rôle |
-|---|---|---|---|
-| POST | `/api/v1/alerts` | X-API-Key | Reçoit une alerte (capteur, IA…) |
-| GET | `/api/v1/alerts?limit=50` | non | Historique des alertes |
-| GET | `/api/v1/metrics?limit=100` | non | Historique des mesures |
-| GET | `/api/v1/status` | non | État en ligne du boîtier |
-| POST | `/api/v1/commands` | X-API-Key | Envoie une commande aux actionneurs |
-| POST / GET | `/api/v1/frame` | POST: X-API-Key | Dernière image webcam annotée (JPEG) |
-| GET | `/api/v1/health` | non | Santé de l'API et du broker |
-| WS | `/ws` | non | Flux temps réel (mesures, alertes, commandes) |
+    http://localhost:8000/docs
+
+Vérification de l'API :
+
+    http://localhost:8000/api/v1/health
+
+## Simulateur
+
+Le simulateur Python permet d'envoyer des données de capteurs vers le backend via MQTT.
+
+Depuis le dossier backend :
+
+    python tools/simulate.py <API_KEY>
+
+Le simulateur envoie notamment des données de température, humidité, gaz et présence.
+
+## MQTT
+
+Topic utilisé pour les données de télémétrie :
+
+    sentinel/telemetry
+
+Exemple de message :
+
+    {
+      "device": "esp-01",
+      "temperature": 20.5,
+      "humidity": 46.2,
+      "gas": 210,
+      "pir": false
+    }
+
+Topic utilisé pour les commandes :
+
+    sentinel/cmd
+
+Exemple de commande :
+
+    {
+      "device": "esp-01",
+      "buzzer": true
+    }
+
+## API REST
+
+Principaux endpoints disponibles :
+
+    GET  /api/v1/health
+    GET  /api/v1/status
+    GET  /api/v1/metrics
+    GET  /api/v1/alerts
+    POST /api/v1/alerts
+    POST /api/v1/commands
+    WS   /ws
+
+L'endpoint POST /api/v1/alerts permet notamment de créer une alerte.
 
 Exemple :
-```bash
-curl -X POST http://localhost:8000/api/v1/alerts \
-  -H "Content-Type: application/json" -H "X-API-Key: $API_KEY" \
-  -d '{"device":"esp-01","type":"intrusion","level":"critical","message":"Personne détectée"}'
-```
 
-Champs d'une alerte : `device`, `type`, `level` (`info`/`warning`/`critical`), `value` (optionnel), `message` (optionnel), `ts` (optionnel).
+    {
+      "device": "esp-01",
+      "type": "intrusion",
+      "level": "critical",
+      "message": "Test manuel"
+    }
 
-## Sécurité (côté API)
+## Test du buzzer
 
-- Aucun secret dans le code : configuration par variables d'environnement (`.env` ignoré par Git).
-- Écritures protégées par clé (`X-API-Key`), comparaison en temps constant.
-- Validation stricte des entrées (Pydantic : types, longueurs, valeurs autorisées).
-- Dashboard : affichage via `textContent` (pas d'injection XSS).
-- Conteneur exécuté en utilisateur non-root.
-- À faire avec Cyber/Infra : MQTTS (variable `MQTT_CA`), HTTPS devant l'API (reverse proxy), authentification Mosquitto, restriction des ports via UFW.
+Le dashboard permet d'envoyer une commande au backend.
+
+La commande est transmise via l'API puis publiée sur le topic MQTT de commande.
+
+Le test réalisé permet notamment d'envoyer une commande buzzer ON depuis le dashboard.
+
+## Sécurité actuelle
+
+Les mesures de sécurité actuellement mises en place sont :
+
+- clé API stockée dans .env
+- fichier .env exclu du dépôt Git
+- protection des écritures par clé API
+- validation des données avec Pydantic
+- utilisation de textContent pour l'affichage des données dans le dashboard
+- conteneur API exécuté sans privilèges root
 
 ## Structure
 
-```
-api/main.py            API FastAPI (REST + WebSocket + client MQTT)
-dashboard/index.html   Dashboard temps réel + panneau de contrôle
-mosquitto/             Configuration du broker (dev, à durcir)
-tools/simulate.py      Simulateur de l'ESP8266
-docker-compose.yml     Stack Mosquitto + API
-```
+    backend/
+    ├── api/
+    ├── dashboard/
+    ├── mosquitto/
+    ├── tools/
+    ├── .env.example
+    ├── .gitignore
+    ├── docker-compose.yml
+    └── README.md
 
-## Dépannage
+## Évolutions prévues
 
-- Pas de courbes : vérifier `docker compose logs api` et `/api/v1/health` (champ `mqtt`).
-- Commandes en erreur 401 : saisir la clé API dans le panneau de contrôle.
-- Commandes en erreur 503 : le broker MQTT n'est pas joignable.
+Les éléments suivants ne sont pas encore intégrés dans cette version :
+
+- intégration avec le matériel ESP8266 réel
+- intégration de la caméra et de l'analyse IA
+- MQTTS / TLS
+- HTTPS
+- sécurisation avancée de Mosquitto
+- durcissement réseau et infrastructure
+- supervision et sécurité avancées
