@@ -1,4 +1,4 @@
-"""Sentinel-X - API REST + WebSocket (PC Serveur Local)."""
+"""CyberNex - API REST + WebSocket (PC Serveur Local)."""
 import asyncio
 import json
 import os
@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from typing import Literal, Optional
 
 import paho.mqtt.client as mqtt
+
 from fastapi import (Depends, FastAPI, Header, HTTPException, Request,
                      WebSocket, WebSocketDisconnect)
 from fastapi.responses import Response
@@ -17,15 +18,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 # ---------- Configuration (variables d'environnement, jamais de secret en dur) ----------
-MQTT_HOST = os.getenv("MQTT_HOST", "mosquitto")
+MQTT_HOST = os.getenv("MQTT_HOST", "172.20.10.11")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 MQTT_CA = os.getenv("MQTT_CA", "")          # chemin du CA => active MQTTS
 API_KEY = os.getenv("API_KEY", "")           # vide = pas d'auth (dev uniquement)
-DB_PATH = os.getenv("DB_PATH", "/data/sentinel.db")
-TOPIC_TELEMETRY = "sentinel/telemetry"
-TOPIC_CMD = "sentinel/cmd"
+DB_PATH = os.getenv("DB_PATH", "/data/cybernex.db")
+TOPIC_TELEMETRY = "cybernex/sensors"
+TOPIC_CMD = "cybernex/cmd"
 
 # ---------- Base de donnees ----------
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -84,10 +85,18 @@ def on_message(c, userdata, msg):
     except ValueError:
         return
     row = {
-        "ts": time.time(),
-        "device": str(d.get("device", "esp-01"))[:32],
-        "temp": num(d, "temp"), "hum": num(d, "hum"), "gas": num(d, "gas"),
-        "pir": int(bool(d.get("pir", 0))),
+      "ts": time.time(),
+      "device": str(
+        d.get("device_id", "CYBERNEX-EDGE-01")
+      )[:32],
+
+     "temp": num(d, "temperature"),
+     "hum": num(d, "humidity"),
+     "gas": num(d, "gaz"),
+
+      "pir": int(
+        bool(d.get("presence", 0))
+      ),
     }
     with db_lock:
         db.execute("INSERT INTO metrics(ts,device,temp,hum,gas,pir) VALUES(?,?,?,?,?,?)",
@@ -121,7 +130,7 @@ async def lifespan(app: FastAPI):
         mqtt_client.loop_stop()
 
 
-app = FastAPI(title="Sentinel-X API", version="1.0", lifespan=lifespan)
+app = FastAPI(title="CyberNex API", version="1.0", lifespan=lifespan)
 
 
 # ---------- Authentification simple par cle ----------
