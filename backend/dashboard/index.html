@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel-X - Supervision</title>
+<style>
+  :root { --bg:#0b1220; --card:#131c2e; --txt:#e2e8f0; --mut:#94a3b8; --ok:#22c55e; --warn:#f59e0b; --crit:#ef4444; --acc:#38bdf8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--txt); }
+  header { display:flex; justify-content:space-between; align-items:center; padding:14px 20px; border-bottom:1px solid #1e293b; }
+  h1 { margin:0; font-size:20px; }
+  .badge { padding:4px 10px; border-radius:999px; font-size:13px; background:#334155; }
+  .badge.on { background:var(--ok); color:#052e16; } .badge.off { background:var(--crit); }
+  main { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:14px; padding:16px; }
+  .card { background:var(--card); border-radius:10px; padding:14px; }
+  .card h2 { margin:0 0 10px; font-size:15px; color:var(--mut); font-weight:600; }
+  canvas { width:100%; height:130px; display:block; }
+  img { width:100%; border-radius:6px; background:#000; min-height:120px; }
+  button { padding:8px 14px; margin:4px 4px 4px 0; border:0; border-radius:6px; cursor:pointer; background:#1e3a5f; color:var(--txt); }
+  button:hover { background:#2a4f80; } button.off { background:#3b2230; }
+  input { padding:7px; border-radius:6px; border:1px solid #334155; background:#0b1220; color:var(--txt); width:100%; margin-bottom:8px; }
+  ul { list-style:none; margin:0; padding:0; max-height:260px; overflow:auto; }
+  li { padding:6px 8px; margin-bottom:4px; border-radius:6px; background:#0f172a; border-left:4px solid var(--mut); font-size:13px; }
+  li.warning { border-color:var(--warn); } li.critical { border-color:var(--crit); } li.info { border-color:var(--acc); }
+  .pir { display:inline-block; width:12px; height:12px; border-radius:50%; background:#334155; margin-right:6px; }
+  .pir.on { background:var(--crit); }
+  #msg { font-size:12px; color:var(--mut); min-height:16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛰️ Sentinel-X — Supervision</h1>
+  <div><span id="ws" class="badge off">WebSocket</span> <span id="dev" class="badge off">Boîtier hors ligne</span></div>
+</header>
+<main>
+  <div class="card"><h2>Température (°C)</h2><canvas id="c-temp" width="400" height="130"></canvas></div>
+  <div class="card"><h2>Humidité (%)</h2><canvas id="c-hum" width="400" height="130"></canvas></div>
+  <div class="card"><h2>Gaz / Fumées (MQ-2)</h2><canvas id="c-gas" width="400" height="130"></canvas></div>
+  <div class="card"><h2><span id="pir" class="pir"></span>Détecteur de présence (PIR)</h2>
+    <p id="pirtxt">Aucune présence</p></div>
+  <div class="card"><h2>Caméra USB (analyse IA)</h2><img id="cam" alt="Flux caméra"></div>
+  <div class="card"><h2>Panneau de contrôle</h2>
+    <input id="key" type="password" placeholder="Clé API (X-API-Key)" autocomplete="off">
+    <div>
+      <button onclick="cmd('buzzer',true)">🔔 Buzzer ON</button><button class="off" onclick="cmd('buzzer',false)">Buzzer OFF</button><br>
+      <button onclick="cmd('led_red',true)">🔴 LED rouge ON</button><button class="off" onclick="cmd('led_red',false)">OFF</button><br>
+      <button onclick="cmd('led_green',true)">🟢 LED verte ON</button><button class="off" onclick="cmd('led_green',false)">OFF</button>
+    </div>
+    <div id="msg"></div></div>
+  <div class="card" style="grid-column:1/-1"><h2>Alertes récentes</h2><ul id="alerts"></ul></div>
+</main>
+<script>
+const MAX = 60, series = {temp:[], hum:[], gas:[]};
+const colors = {temp:'#f97316', hum:'#38bdf8', gas:'#a3e635'};
+let lastMetric = 0;
+
+function draw(key) {
+  const cv = document.getElementById('c-' + key), c = cv.getContext('2d'), d = series[key];
+  c.clearRect(0, 0, cv.width, cv.height);
+  if (d.length < 2) return;
+  const min = Math.min(...d), max = Math.max(...d), r = (max - min) || 1;
+  c.strokeStyle = colors[key]; c.lineWidth = 2; c.beginPath();
+  d.forEach((v, i) => {
+    const x = i / (d.length - 1) * cv.width, y = cv.height - 10 - (v - min) / r * (cv.height - 36);
+    i ? c.lineTo(x, y) : c.moveTo(x, y);
+  });
+  c.stroke();
+  c.fillStyle = '#e2e8f0'; c.font = '14px sans-serif';
+  c.fillText('Actuel : ' + d[d.length - 1].toFixed(1) + '   (min ' + min.toFixed(1) + ' / max ' + max.toFixed(1) + ')', 6, 16);
+}
+
+function addMetric(m) {
+  for (const k of ['temp', 'hum', 'gas']) {
+    if (m[k] !== null && m[k] !== undefined) { series[k].push(m[k]); if (series[k].length > MAX) series[k].shift(); draw(k); }
+  }
+  document.getElementById('pir').classList.toggle('on', !!m.pir);
+  document.getElementById('pirtxt').textContent = m.pir ? 'Présence détectée !' : 'Aucune présence';
+  lastMetric = Date.now();
+}
+
+function addAlert(a, prepend = true) {
+  const li = document.createElement('li');
+  li.className = a.level || 'info';
+  const t = new Date((a.ts || Date.now() / 1000) * 1000).toLocaleTimeString();
+  // textContent (et non innerHTML) : protège contre l'injection XSS via les alertes
+  li.textContent = `[${t}] ${String(a.level).toUpperCase()} • ${a.device} • ${a.type}` +
+    (a.value != null ? ` = ${a.value}` : '') + (a.message ? ` — ${a.message}` : '');
+  const ul = document.getElementById('alerts');
+  prepend ? ul.prepend(li) : ul.append(li);
+  while (ul.children.length > 50) ul.lastChild.remove();
+}
+
+function connect() {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  const badge = document.getElementById('ws');
+  ws.onopen = () => { badge.className = 'badge on'; setInterval(() => ws.readyState === 1 && ws.send('ping'), 20000); };
+  ws.onclose = () => { badge.className = 'badge off'; setTimeout(connect, 2000); };
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.kind === 'metric') addMetric(m);
+    else if (m.kind === 'alert') addAlert(m);
+  };
+}
+
+async function cmd(target, state) {
+  const msg = document.getElementById('msg');
+  try {
+    const r = await fetch('/api/v1/commands', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-API-Key': document.getElementById('key').value},
+      body: JSON.stringify({target, state})
+    });
+    msg.textContent = r.ok ? `Commande envoyée : ${target} → ${state ? 'ON' : 'OFF'}` : `Erreur ${r.status}`;
+  } catch (e) { msg.textContent = 'API injoignable'; }
+}
+
+async function init() {
+  try {
+    (await (await fetch('/api/v1/metrics?limit=60')).json()).forEach(addMetric);
+    (await (await fetch('/api/v1/alerts?limit=20')).json()).reverse().forEach(a => addAlert(a));
+  } catch (e) {}
+  connect();
+  setInterval(() => {
+    const on = Date.now() - lastMetric < 15000, b = document.getElementById('dev');
+    b.className = 'badge ' + (on ? 'on' : 'off'); b.textContent = on ? 'Boîtier en ligne' : 'Boîtier hors ligne';
+    document.getElementById('cam').src = '/api/v1/frame?t=' + Date.now();
+  }, 1000);
+}
+init();
+</script>
+</body>
+</html>
