@@ -84,26 +84,86 @@ def on_message(c, userdata, msg):
             return
     except ValueError:
         return
+
     row = {
-      "ts": time.time(),
-      "device": str(
-        d.get("device_id", "CYBERNEX-EDGE-01")
-      )[:32],
-
-     "temp": num(d, "temperature"),
-     "hum": num(d, "humidity"),
-     "gas": num(d, "gaz"),
-
-      "pir": int(
-        bool(d.get("presence", 0))
-      ),
+        "ts": time.time(),
+        "device": str(
+            d.get("device_id", "CYBERNEX-EDGE-01")
+        )[:32],
+        "temp": num(d, "temperature"),
+        "hum": num(d, "humidity"),
+        "gas": num(d, "gaz"),
+        "pir": int(
+            bool(d.get("presence", 0))
+        ),
     }
+
+    alerts_to_create = []
+
+    if row["temp"] is not None and row["temp"] > 40:
+        alerts_to_create.append({
+            "type": "temperature",
+            "level": "critical",
+            "value": row["temp"],
+            "message": f"Température élevée : {row['temp']} °C"
+        })
+
+    if row["gas"] is not None and row["gas"] > 2000:
+        alerts_to_create.append({
+            "type": "gas",
+            "level": "critical",
+            "value": row["gas"],
+            "message": f"Gaz/fumée détecté : {row['gas']}"
+        })
+
+    if row["pir"] == 1:
+        alerts_to_create.append({
+            "type": "presence",
+            "level": "warning",
+            "value": 1,
+            "message": "Présence détectée dans la zone"
+        })
+
     with db_lock:
-        db.execute("INSERT INTO metrics(ts,device,temp,hum,gas,pir) VALUES(?,?,?,?,?,?)",
-                   (row["ts"], row["device"], row["temp"], row["hum"], row["gas"], row["pir"]))
+        db.execute(
+            "INSERT INTO metrics(ts,device,temp,hum,gas,pir) VALUES(?,?,?,?,?,?)",
+            (
+                row["ts"],
+                row["device"],
+                row["temp"],
+                row["hum"],
+                row["gas"],
+                row["pir"]
+            )
+        )
+
+        for alert in alerts_to_create:
+            db.execute(
+                "INSERT INTO alerts(ts,device,type,level,value,message) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    row["ts"],
+                    row["device"],
+                    alert["type"],
+                    alert["level"],
+                    alert["value"],
+                    alert["message"]
+                )
+            )
+
         db.commit()
+
     last_seen[row["device"]] = row["ts"]
+
     push({"kind": "metric", **row})
+
+    for alert in alerts_to_create:
+        push({
+            "kind": "alert",
+            "ts": row["ts"],
+            "device": row["device"],
+            **alert
+        })
 
 
 def start_mqtt():

@@ -1,0 +1,65 @@
+services:
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: cybernex-mosquitto
+
+    ports:
+      - "1883:1883"
+
+    volumes:
+      - ./infrastructure/mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+    restart: unless-stopped
+
+
+  mqtt-relay:
+    build:
+      context: ./infrastructure/mqtt-relay
+
+    container_name: cybernex-mqtt-relay
+
+    depends_on:
+      - mosquitto
+
+    restart: unless-stopped
+
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: api/Dockerfile
+
+    container_name: cybernex-api
+
+    env_file:
+      - .env
+
+    ports:
+     - "8000:8000"
+
+    volumes:
+      - api-data:/data
+
+    depends_on:
+      - mosquitto
+
+    restart: unless-stopped
+
+  ai-anomaly:
+    build:
+       context: ./ai/anomaly
+
+    container_name: cybernex-ai-anomaly
+
+    depends_on:
+      - api
+
+    environment:
+      API_KEY: ${API_KEY}
+
+    restart: unless-stopped
+
+
+volumes:
+  api-data:
